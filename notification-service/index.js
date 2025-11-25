@@ -7,7 +7,7 @@ const QUEUE_URL = process.env.SQS_QUEUE_URL;
 
 const procesarMensajes = async () => {
     try {
-        // Long Polling (espera hasta 20s si no hay mensajes)
+
         const data = await sqs.receiveMessage({
             QueueUrl: QUEUE_URL,
             MaxNumberOfMessages: 1,
@@ -19,7 +19,6 @@ const procesarMensajes = async () => {
                 const venta = JSON.parse(message.Body);
                 console.log(`📧 [EMAIL SIMULADO] Enviando confirmación a ${venta.cliente} por total de $${venta.total}`);
                 
-                // IMPORTANTE: Borrar mensaje de la cola para no procesarlo de nuevo
                 await sqs.deleteMessage({
                     QueueUrl: QUEUE_URL,
                     ReceiptHandle: message.ReceiptHandle
@@ -30,9 +29,8 @@ const procesarMensajes = async () => {
         console.error("Error en worker:", error);
     }
     
-    // Volver a llamar inmediatamente
     setImmediate(procesarMensajes);
 };
 
-console.log("🚀 Notification Worker Iniciado...");
+console.log("Notification Worker Iniciado...");
 procesarMensajes();

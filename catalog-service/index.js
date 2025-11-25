@@ -6,13 +6,13 @@ app.use(express.json());
 
 mongoose.connect(process.env.MONGO_URI);
 
-// --- MODELOS RELACIONALES ---
+// --- MODELOS RELACIONALES --- //
 const ClienteSchema = new mongoose.Schema({
     nombre: { type: String, required: true },
     email: { type: String, required: true },
     telefono: String,
     rfc: String,
-    direccion: String, // Domicilio
+    direccion: String, 
     fecha_registro: { type: Date, default: Date.now }
 });
 
@@ -30,9 +30,8 @@ const ProductoSchema = new mongoose.Schema({
 const Cliente = mongoose.model('Cliente', ClienteSchema);
 const Producto = mongoose.model('Producto', ProductoSchema);
 
-// --- ENDPOINTS ---
+// --- ENDPOINTS --- //
 
-// --- CRUD CLIENTES ---
 // Crear
 app.post('/clientes', async (req, res) => {
     try {

@@ -1,20 +1,41 @@
-const { createMetricsLogger, Unit } = require("aws-embedded-metrics");
+const AWS = require('aws-sdk');
 
-// Detectamos el ambiente
+// Configuración regional
+const cloudwatch = new AWS.CloudWatch({ region: process.env.AWS_REGION || 'us-east-1' });
 const ENV = process.env.NODE_ENV || "LOCAL";
 
-const logMetric = async (metricName, value, unit = Unit.Count) => {
-    // 1. Siempre imprimimos en consola (Logs básicos)
-    console.log(`[METRICA - ${ENV}] ${metricName}: ${value}`);
+// Helper para enviar métricas
+const logMetric = async (metricName, value, unit, dimensions = {}) => {
+    
+    //Log Local 
+    console.log(`[METRICA - ${ENV}] ${metricName}: ${value} ${JSON.stringify(dimensions)}`);
 
-    // 2. Solo si es PRODUCCION enviamos a CloudWatch
+    // 2. Envio a Nube 
     if (ENV === "PRODUCTION") {
-        const metrics = createMetricsLogger();
-        metrics.setNamespace("ExamenFinal/Ventas");
-        metrics.putDimensions({ Environment: "PRODUCTION" });
-        metrics.putMetric(metricName, value, unit);
-        await metrics.flush();
+        try {
+            // Convertimos el objeto dimensions a formato AWS
+            const awsDimensions = [
+                { Name: 'Environment', Value: 'PROD' }, // Dimensión Fija
+                ...Object.keys(dimensions).map(key => ({ Name: key, Value: dimensions[key] }))
+            ];
+
+            const params = {
+                MetricData: [
+                    {
+                        MetricName: metricName,
+                        Dimensions: awsDimensions,
+                        Unit: unit,
+                        Value: value
+                    },
+                ],
+                Namespace: 'ExamenFinal/App' 
+            };
+
+            await cloudwatch.putMetricData(params).promise();
+        } catch (error) {
+            console.error("Error métrica:", error.message);
+        }
     }
 };
 
-module.exports = { logMetric, Unit };
+module.exports = { logMetric };

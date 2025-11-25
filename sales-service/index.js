@@ -1,8 +1,9 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const AWS = require('aws-sdk');
-const PDFDocument = require('pdfkit'); // Librería PDF
-const { logMetric, Unit } = require('./metrics');
+const PDFDocument = require('pdfkit'); 
+
+const { logMetric } = require('./metrics');
 require('dotenv').config();
 
 const app = express();
@@ -10,18 +11,20 @@ app.use(express.json());
 
 // CONFIGURACIÓN
 const S3_BUCKET_NAME = process.env.S3_BUCKET_NAME;
-const SNS_TOPIC_ARN = process.env.SNS_TOPIC_ARN; // El ARN que copiaste
+const SNS_TOPIC_ARN = process.env.SNS_TOPIC_ARN;
 const MONGO_URI = process.env.MONGO_URI;
 
 AWS.config.update({ region: process.env.AWS_REGION || 'us-east-1' });
 const s3 = new AWS.S3();
 const sns = new AWS.SNS();
 
-mongoose.connect(MONGO_URI).then(() => console.log('DB Conectada'));
+mongoose.connect(MONGO_URI)
+    .then(() => console.log('✅ DB Conectada'))
+    .catch(err => console.error('❌ Error DB:', err));
 
-// MODELO COMPLETO (Relación por Referencia + Snapshot)
+// MODELO COMPLETO
 const VentaSchema = new mongoose.Schema({
-    cliente: { type: mongoose.Schema.Types.ObjectId, ref: 'Cliente', required: true }, // Referencia real
+    cliente: { type: mongoose.Schema.Types.ObjectId, ref: 'Cliente', required: true },
     cliente_snapshot: {
         nombre: String,
         email: String,
@@ -30,7 +33,7 @@ const VentaSchema = new mongoose.Schema({
         direccion: String
     },
     items: [{
-        producto: { type: mongoose.Schema.Types.ObjectId, ref: 'Producto', required: true }, // Referencia real
+        producto: { type: mongoose.Schema.Types.ObjectId, ref: 'Producto', required: true },
         snapshot: {
             nombre: String,
             descripcion: String,
@@ -40,10 +43,8 @@ const VentaSchema = new mongoose.Schema({
         cantidad: Number
     }],
     total: Number,
-    pdf_url: String,         // Aquí guardaremos el link del PDF
+    pdf_url: String,
     estado: { type: String, enum: ['pagada', 'pendiente', 'cancelada'], default: 'pagada' },
-    metodo_pago: String,
-    direccion_entrega: String,
     folio: { type: String, unique: true },
     fecha: { type: Date, default: Date.now }
 });
@@ -55,63 +56,67 @@ const generarYSubirPDF = async (ventaData, ventaId) => {
         const doc = new PDFDocument();
         const buffers = [];
 
-        // 1. Guardar datos en buffer en lugar de archivo local
         doc.on('data', buffers.push.bind(buffers));
         doc.on('end', async () => {
             const pdfData = Buffer.concat(buffers);
-            
-            // 2. Subir a S3
             const params = {
                 Bucket: S3_BUCKET_NAME,
-                Key: `notas_venta/nota_${ventaId}.pdf`, // Nombre del archivo
+                Key: `notas_venta/nota_${ventaId}.pdf`,
                 Body: pdfData,
                 ContentType: 'application/pdf',
-                // ACL: 'public-read' // Descomentar si tu bucket lo requiere explícitamente
             };
-
             try {
-                // Usamos upload() de AWS SDK
                 const stored = await s3.upload(params).promise();
-                resolve(stored.Location); // Devuelve la URL pública
+                resolve(stored.Location);
             } catch (e) {
                 reject(e);
             }
         });
 
-        // 3. Diseñar el PDF
+        // DISEÑO DEL PDF
         doc.fontSize(20).text('NOTA DE VENTA', { align: 'center' });
         doc.moveDown();
-        doc.fontSize(14).text(`Folio: ${ventaId}`);
-        doc.text(`Cliente: ${ventaData.cliente_nombre}`);
+        doc.fontSize(14).text(`Folio: ${ventaData.folio || ventaId}`);
+
+        doc.text(`Cliente: ${ventaData.cliente_snapshot.nombre}`);
+        doc.text(`RFC: ${ventaData.cliente_snapshot.rfc || 'XAXX010101000'}`);
         doc.text(`Fecha: ${new Date().toLocaleString()}`);
         doc.moveDown();
         
         doc.text('--- DETALLE ---');
+
         ventaData.items.forEach(item => {
-            doc.text(`${item.nombre} x${item.cantidad} - $${item.precio * item.cantidad}`);
+            const nombre = item.snapshot.nombre;
+            const precio = item.snapshot.precio;
+            const subtotal = precio * item.cantidad;
+            doc.text(`${nombre} x${item.cantidad} - $${subtotal}`);
         });
         doc.moveDown();
         doc.fontSize(16).text(`TOTAL: $${ventaData.total}`, { align: 'right' });
         
-        doc.end(); // Finaliza el PDF
+        doc.end();
     });
 };
 
-// Nuevo endpoint: recibe { cliente: id, productos: [{ producto: id, cantidad }] }
+// --- ENDPOINT PRINCIPAL ---
 app.post('/ventas', async (req, res) => {
+    const start = Date.now(); // ⏱️ INICIO CRONÓMETRO
+    
     try {
         const { cliente, productos, metodo_pago, direccion_entrega } = req.body;
-        // 1. Buscar cliente
+        
+        // Validaciones 
         const clienteData = await mongoose.connection.db.collection('clientes').findOne({ _id: new mongoose.Types.ObjectId(cliente) });
-        if (!clienteData) return res.status(400).json({ error: 'Cliente no encontrado' });
+        if (!clienteData) throw new Error('Cliente no encontrado');
 
-        // 2. Buscar productos y armar items
         const items = [];
         let total = 0;
+        
         for (const p of productos) {
             const prodData = await mongoose.connection.db.collection('productos').findOne({ _id: new mongoose.Types.ObjectId(p.producto) });
-            if (!prodData) return res.status(400).json({ error: `Producto no encontrado: ${p.producto}` });
-            if (prodData.stock < p.cantidad) return res.status(400).json({ error: `Stock insuficiente para ${prodData.nombre}` });
+            if (!prodData) throw new Error(`Producto no encontrado: ${p.producto}`);
+            if (prodData.stock < p.cantidad) throw new Error(`Stock insuficiente para ${prodData.nombre}`);
+            
             items.push({
                 producto: prodData._id,
                 snapshot: {
@@ -125,7 +130,7 @@ app.post('/ventas', async (req, res) => {
             total += prodData.precio * p.cantidad;
         }
 
-        // 3. Actualizar stock
+        // Actualizar stock
         for (const p of productos) {
             await mongoose.connection.db.collection('productos').updateOne(
                 { _id: new mongoose.Types.ObjectId(p.producto) },
@@ -133,31 +138,33 @@ app.post('/ventas', async (req, res) => {
             );
         }
 
-        // 4. Crear ID preliminar y folio
+        // 3. Crear Folio
         const nuevaVentaId = new mongoose.Types.ObjectId();
         const folio = `VENTA-${nuevaVentaId.toString().slice(-6).toUpperCase()}`;
 
-        // 5. Generar PDF y Subir a S3
+        // 4. Preparar datos para PDF
         const ventaSnapshot = {
+            folio, // Pasamos el folio al PDF
             cliente_snapshot: {
                 nombre: clienteData.nombre,
                 email: clienteData.email,
                 telefono: clienteData.telefono,
-                rfc: clienteData.rfc,
+                rfc: clienteData.rfc || 'Generico',
                 direccion: clienteData.direccion
             },
             items,
             total
         };
+
+        // 5. Generar PDF
+        console.log("Generando PDF");
         const urlPDF = await generarYSubirPDF(ventaSnapshot, nuevaVentaId);
 
-        // 6. Guardar en Mongo
+        // 6. Guardar Venta
         const ventaGuardada = await Venta.create({
             _id: nuevaVentaId,
             cliente: clienteData._id,
-            cliente_snapshot: ventaSnapshot.cliente_snapshot,
-            items,
-            total,
+            ...ventaSnapshot,
             pdf_url: urlPDF,
             estado: 'pagada',
             metodo_pago,
@@ -165,28 +172,39 @@ app.post('/ventas', async (req, res) => {
             folio
         });
 
-        // 7. Enviar Notificación via SNS
+        // 7. Notificación SNS
         await sns.publish({
             TopicArn: SNS_TOPIC_ARN,
-            Subject: `Nueva Compra Confirmada - Folio ${folio}`,
-            Message: `Hola ${clienteData.nombre},\n\nGracias por tu compra.\n\nPuedes descargar tu nota de venta aquí:\n${urlPDF}\n\nTotal: $${total}`
+            Subject: `Nueva Compra Confirmada - ${folio}`,
+            Message: `Hola ${clienteData.nombre},\n\nGracias por tu compra.\nDescarga tu nota:\n${urlPDF}\n\nTotal: $${total}`
         }).promise();
 
-        await logMetric("VentasExitosas", 1, Unit.Count);
+        // --- MÉTRICAS DE ÉXITO ---
+        const duration = Date.now() - start;
+        // Métrica de tiempo (para percentiles)
+        await logMetric("TiempoEjecucion", duration, "Milliseconds", { Endpoint: "/ventas" });
+        // Métrica de éxito HTTP (para rangos)
+        await logMetric("RequestCount", 1, "Count", { Status: "2xx" });
 
         res.status(201).json({ 
             status: "Venta Exitosa", 
             pdf: urlPDF,
             id: ventaGuardada._id,
-            folio,
-            total
+            folio
         });
+
     } catch (error) {
-        console.error(error);
-        await logMetric("ErroresVenta", 1, Unit.Count);
+        console.error("Error en venta:", error.message);
+        
+        // --- MÉTRICAS DE ERROR ---
+        const duration = Date.now() - start;
+        await logMetric("TiempoEjecucion", duration, "Milliseconds", { Endpoint: "/ventas" });
+        await logMetric("RequestCount", 1, "Count", { Status: "5xx" }); // Marcamos como 5xx
+
+        // Devolvemos error al cliente
         res.status(500).json({ error: error.message });
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Sales Service con PDF running on ${PORT}`));
+app.listen(PORT, () => console.log(`Sales Service running on ${PORT}`));
