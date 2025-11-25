@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  # 1. Base de Datos Local (Se queda encendida por si decides usarla)
+  mongo-local:
+    image: mongo:5.0
+    container_name: mongo-examen
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+  # 2. Servicio de Ventas (El más importante)
+  sales:
+    build: ./sales-service
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=LOCAL
+      # Usamos la variable del .env (Atlas)
+      - MONGO_URI=${MONGO_URI}
+      
+      # AWS - Credenciales
+      - AWS_REGION=${AWS_REGION}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}
+      
+      # AWS - Servicios (FALTABAN ESTOS DOS)
+      - SQS_QUEUE_URL=${SQS_QUEUE_URL}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+      - SNS_TOPIC_ARN=${SNS_TOPIC_ARN}
+    depends_on:
+      - mongo-local
+
+  # 3. Servicio de Notificaciones
+  notifications:
+    build: ./notification-service
+    environment:
+      - NODE_ENV=LOCAL
+      - SQS_QUEUE_URL=${SQS_QUEUE_URL}
+      # Credenciales
+      - AWS_REGION=${AWS_REGION}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}
+
+  # 4. Servicio de Catálogos
+  catalog:
+    build: ./catalog-service
+    ports:
+      - "3001:3000"
+    environment:
+      - NODE_ENV=LOCAL
+      # Usamos la variable del .env (Atlas)
+      - MONGO_URI=${MONGO_URI}
+    depends_on:
+      - mongo-local
+
+volumes:
+  mongo-data:

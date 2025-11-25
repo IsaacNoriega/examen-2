@@ -1,0 +1,112 @@
+name: CI/CD Pipeline Examen
+
+on:
+  push:
+    branches: [ "main" ]
+
+env:
+  # Definimos los nombres de tus repos en ECR
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+  IMAGE_SALES: examen/sales
+  IMAGE_CATALOG: examen/catalog
+  IMAGE_NOTIF: examen/notification
+
+jobs:
+  build-and-push:
+    name: Build & Push a ECR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del codigo
+        uses: actions/checkout@v4
+
+      - name: Configurar Credenciales AWS
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      # --- SERVICIO 1: VENTAS ---
+      - name: Build & Push Sales
+        run: |
+          cd sales-service
+          docker build -t $ECR_REGISTRY/$IMAGE_SALES:latest .
+          docker push $ECR_REGISTRY/$IMAGE_SALES:latest
+
+      # --- SERVICIO 2: NOTIFICACIONES ---
+      - name: Build & Push Notifications
+        run: |
+          cd notification-service
+          docker build -t $ECR_REGISTRY/$IMAGE_NOTIF:latest .
+          docker push $ECR_REGISTRY/$IMAGE_NOTIF:latest
+
+      # --- SERVICIO 3: CATALOGO ---
+      - name: Build & Push Catalog
+        run: |
+          cd catalog-service
+          docker build -t $ECR_REGISTRY/$IMAGE_CATALOG:latest .
+          docker push $ECR_REGISTRY/$IMAGE_CATALOG:latest
+
+  deploy:
+    name: Deploy to EC2
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          # Pasamos los secretos como variables de entorno al script remoto
+          envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN,MONGO_URI,SQS_QUEUE_URL,S3_BUCKET_NAME,SNS_TOPIC_ARN
+          script: |
+            # 1. Exportar variables en la sesión SSH actual
+            export AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+            export AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            export AWS_SESSION_TOKEN=${{ secrets.AWS_SESSION_TOKEN }}
+            export AWS_REGION=us-east-1
+            
+            # Variables de la App
+            export MONGO_URI='${{ secrets.MONGO_URI }}'
+            export SQS_QUEUE_URL=${{ secrets.SQS_QUEUE_URL }}
+            export S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }}
+            export SNS_TOPIC_ARN=${{ secrets.SNS_TOPIC_ARN }}
+
+            # 2. Entrar a la carpeta
+            cd examen-final || mkdir examen-final && cd examen-final
+
+            # 3. REGENERAR EL ARCHIVO .env (El truco maestro)
+            # Esto asegura que si cambias credenciales en GitHub, se actualicen en la EC2
+            echo "Generando .env fresco..."
+            echo "COMPOSE_PROJECT_NAME=examen-final" > .env
+            echo "NODE_ENV=PRODUCTION" >> .env
+            echo "AWS_REGION=us-east-1" >> .env
+            
+            # Inyectamos secretos
+            echo "AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID" >> .env
+            echo "AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY" >> .env
+            echo "AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN" >> .env
+            echo "MONGO_URI=$MONGO_URI" >> .env
+            echo "SQS_QUEUE_URL=$SQS_QUEUE_URL" >> .env
+            echo "S3_BUCKET_NAME=$S3_BUCKET_NAME" >> .env
+            echo "SNS_TOPIC_ARN=$SNS_TOPIC_ARN" >> .env
+
+            # 4. Login en ECR (Desde dentro de la EC2)
+            aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+
+            # 5. Actualizar (Docker Compose hace la magia de los 3 servicios juntos)
+            echo "Bajando imágenes nuevas..."
+            docker-compose pull
+            
+            echo "Reiniciando servicios..."
+            docker-compose up -d --remove-orphans
+            
+            # 6. Limpieza
+            docker image prune -f
