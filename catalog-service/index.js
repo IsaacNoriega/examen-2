@@ -6,7 +6,7 @@ app.use(express.json());
 
 mongoose.connect(process.env.MONGO_URI);
 
-// --- MODELOS RELACIONALES --- //
+// Esquemas 
 const ClienteSchema = new mongoose.Schema({
     nombre: { type: String, required: true },
     email: { type: String, required: true },
@@ -30,7 +30,6 @@ const ProductoSchema = new mongoose.Schema({
 const Cliente = mongoose.model('Cliente', ClienteSchema);
 const Producto = mongoose.model('Producto', ProductoSchema);
 
-// --- ENDPOINTS --- //
 
 // Crear
 app.post('/clientes', async (req, res) => {
@@ -81,7 +80,6 @@ app.delete('/clientes/:id', async (req, res) => {
     }
 });
 
-// --- CRUD PRODUCTOS ---
 // Crear
 app.post('/productos', async (req, res) => {
     try {
@@ -130,18 +128,6 @@ app.delete('/productos/:id', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-
-// Listar para obtener IDs (legacy)
-app.get('/data', async (req, res) => {
-    try {
-        const clientes = await Cliente.find();
-        const productos = await Producto.find();
-        res.json({ clientes, productos });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Catalogos en ${PORT}` ));

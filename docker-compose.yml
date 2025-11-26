@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # 1. Base de Datos Local (Se queda encendida por si decides usarla)
+  # 1. Base de Datos Local
   mongo-local:
     image: mongo:5.0
     container_name: mongo-examen
@@ -10,15 +10,14 @@ services:
     volumes:
       - mongo-data:/data/db
 
-  # 2. Servicio de Ventas (El más importante)
+  # 2. Servicio de Ventas
   sales:
     build: ./sales-service
     ports:
       - "3000:3000"
     environment:
       - NODE_ENV=LOCAL
-      # Usamos la variable del .env (Atlas)
-      - MONGO_URI=${MONGO_URI}
+      - MONGO_URI=mongodb://mongo-local:27017/examen_final
       
       # AWS - Credenciales
       - AWS_REGION=${AWS_REGION}
@@ -26,7 +25,7 @@ services:
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}
       
-      # AWS - Servicios (FALTABAN ESTOS DOS)
+      # AWS - Servicios 
       - SQS_QUEUE_URL=${SQS_QUEUE_URL}
       - S3_BUCKET_NAME=${S3_BUCKET_NAME}
       - SNS_TOPIC_ARN=${SNS_TOPIC_ARN}
@@ -52,8 +51,8 @@ services:
       - "3001:3000"
     environment:
       - NODE_ENV=LOCAL
-      # Usamos la variable del .env (Atlas)
-      - MONGO_URI=${MONGO_URI}
+      # Usamos la variable del .env 
+      - MONGO_URI=mongodb://mongo-local:27017/examen_final
     depends_on:
       - mongo-local
 

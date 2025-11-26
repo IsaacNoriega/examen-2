@@ -17,7 +17,7 @@ const procesarMensajes = async () => {
         if (data.Messages) {
             for (const message of data.Messages) {
                 const venta = JSON.parse(message.Body);
-                console.log(`📧 [EMAIL SIMULADO] Enviando confirmación a ${venta.cliente} por total de $${venta.total}`);
+                console.log(` Enviando confirmación`);
                 
                 await sqs.deleteMessage({
                     QueueUrl: QUEUE_URL,
