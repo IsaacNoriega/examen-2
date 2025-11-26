@@ -32,5 +32,4 @@ const procesarMensajes = async () => {
     setImmediate(procesarMensajes);
 };
 
-console.log("Notification Worker Iniciado...");
 procesarMensajes();

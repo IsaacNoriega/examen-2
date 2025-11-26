@@ -89,20 +89,24 @@ const generarYSubirPDF = async (ventaData, ventaId) => {
 // Post para crear una venta
 app.post('/ventas', async (req, res) => {
     const start = Date.now();
-
     try {
         const { cliente, productos, metodo_pago, direccion_entrega } = req.body;
 
+        // Validación 
+        if (!cliente || !Array.isArray(productos) || productos.length === 0) {
+            return res.status(400).json({ error: 'Faltan datos obligatorios: cliente y productos.' });
+        }
+
         const clienteData = await mongoose.connection.db.collection('clientes').findOne({ _id: new mongoose.Types.ObjectId(cliente) });
-        if (!clienteData) throw new ClientError('Cliente no encontrado'); // 4xx
+        if (!clienteData) return res.status(404).json({ error: 'Cliente no encontrado.' });
 
         const items = [];
         let total = 0;
 
         for (const p of productos) {
             const prodData = await mongoose.connection.db.collection('productos').findOne({ _id: new mongoose.Types.ObjectId(p.producto) });
-            if (!prodData) throw new ClientError(`Producto no encontrado: ${p.producto}`); // 4xx
-            if (prodData.stock < p.cantidad) throw new ClientError(`Stock insuficiente para ${prodData.nombre}`); // 4xx
+            if (!prodData) return res.status(404).json({ error: `Producto no encontrado: ${p.producto}` });
+            if (prodData.stock < p.cantidad) return res.status(409).json({ error: `Stock insuficiente para ${prodData.nombre}` });
 
             items.push({
                 producto: prodData._id,
@@ -140,14 +144,16 @@ app.post('/ventas', async (req, res) => {
 
     } catch (error) {
         const duration = Date.now() - start;
-        const statusCode = error.status || 500;
-        const statusMetric = (statusCode >= 400 && statusCode < 500) ? '4xx' : '5xx'; // Determina la métrica
-
+        let statusCode = 500;
+        let statusMetric = '5xx';
+        if (error.name === 'ValidationError' || error.name === 'ClientError') {
+            statusCode = error.status || 400;
+            statusMetric = (statusCode >= 400 && statusCode < 500) ? '4xx' : '5xx';
+        }
+        if (res.headersSent) return;
         console.error(`Error ${statusCode} en venta:`, error.message);
-
         await logMetric("TiempoEjecucion", duration, "Milliseconds", { Endpoint: "/ventas" });
         await logMetric("RequestCount", 1, "Count", { Status: statusMetric });
-
         res.status(statusCode).json({ error: error.message });
     }
 });
