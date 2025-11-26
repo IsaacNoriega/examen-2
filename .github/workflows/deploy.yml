@@ -5,7 +5,6 @@ on:
     branches: [ "main" ]
 
 env:
-  # Definimos los nombres de tus repos en ECR
   ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
   IMAGE_SALES: examen/sales
   IMAGE_CATALOG: examen/catalog
@@ -31,21 +30,18 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
 
-      # --- SERVICIO 1: VENTAS ---
       - name: Build & Push Sales
         run: |
           cd sales-service
           docker build -t $ECR_REGISTRY/$IMAGE_SALES:latest .
           docker push $ECR_REGISTRY/$IMAGE_SALES:latest
 
-      # --- SERVICIO 2: NOTIFICACIONES ---
       - name: Build & Push Notifications
         run: |
           cd notification-service
           docker build -t $ECR_REGISTRY/$IMAGE_NOTIF:latest .
           docker push $ECR_REGISTRY/$IMAGE_NOTIF:latest
 
-      # --- SERVICIO 3: CATALOGO ---
       - name: Build & Push Catalog
         run: |
           cd catalog-service
@@ -64,7 +60,6 @@ jobs:
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
           port: 22
-          # Pasamos los secretos como variables de entorno al script remoto
           envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN,MONGO_URI,SQS_QUEUE_URL,S3_BUCKET_NAME,SNS_TOPIC_ARN
           script: |
             # 1. Exportar variables en la sesión SSH actual
@@ -82,9 +77,8 @@ jobs:
             # 2. Entrar a la carpeta
             cd examen-final || mkdir examen-final && cd examen-final
 
-            # 3. REGENERAR EL ARCHIVO .env (El truco maestro)
-            # Esto asegura que si cambias credenciales en GitHub, se actualicen en la EC2
-            echo "Generando .env fresco..."
+            # 3. REGENERAR EL ARCHIVO .env
+            echo "Generando .env"
             echo "COMPOSE_PROJECT_NAME=examen-final" > .env
             echo "NODE_ENV=PRODUCTION" >> .env
             echo "AWS_REGION=us-east-1" >> .env

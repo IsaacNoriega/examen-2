@@ -4,7 +4,6 @@ const cloudwatch = new AWS.CloudWatch({ region: process.env.AWS_REGION || 'us-ea
 
 const ENV = process.env.NODE_ENV || "LOCAL";
 
-// Helper para enviar métricas
 const logMetric = async (metricName, value, unit, dimensions = {}) => {
     
     console.log(`[METRICA - ${ENV}] ${metricName}: ${value} ${JSON.stringify(dimensions)}`);
